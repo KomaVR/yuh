@@ -1,15 +1,20 @@
 name: 🤖 Run Discord Bot
 
 on:
+  # every 5 minutes…
+  schedule:
+    - cron: "*/5 * * * *"
+  # …and also allow manual restarts
   workflow_dispatch:
-    # or push if you like
-    # push:
-    #   branches: [ main ]
 
 jobs:
   start-bot:
-    runs-on: [ self-hosted, linux, discord-bot ]
-    timeout-minutes: 0   # let it run indefinitely
+    runs-on: ubuntu-latest
+
+    # ensure only one instance ever runs; new run cancels the old
+    concurrency:
+      group: run-discord-bot
+      cancel-in-progress: true
 
     steps:
       - name: 📥 Checkout code
@@ -23,5 +28,7 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
-      - name: ▶️ Run Discord Bot
-        run: python bot.py
+      - name: ▶️ Launch Discord Bot
+        run: |
+          # Run in the foreground so the job stays alive
+          exec python bot.py
