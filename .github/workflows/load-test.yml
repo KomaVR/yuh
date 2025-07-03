@@ -1,0 +1,40 @@
+# .github/workflows/load-test.yml
+name: 🚀 Distributed Locust Load Test
+on:
+  workflow_dispatch:
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Locust
+      run: |
+        python -m pip install --upgrade pip
+        pip install locust
+
+    - name: Run Locust master + workers
+      run: |
+        # start 4 local workers in background
+        for i in {1..4}; do
+          locust -f lol2.py --worker --master-host=127.0.0.1 &
+        done
+        sleep 5  # give workers time to connect
+
+        # now start master in headless mode
+        locust -f lol2.py \
+          --master \
+          --headless \
+          --host=https://restorecord-leak-search.vercel.app \
+          --users 2000 \
+          --spawn-rate 200 \
+          --run-time 5m
