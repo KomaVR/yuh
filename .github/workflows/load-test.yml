@@ -1,55 +1,85 @@
-name: 🚀 hping3 + Locust Packet Storm
+name: 🚀 Deploy Bot & Run Locust+C-Tools (Self-Healing)
+
+# 1) Kick off manually or on a prior failure
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["🚀 Deploy Bot & Run Locust+C-Tools (Self-Healing)"]
+    types: [completed]
 
-env:
-  USERS:      1000    # total virtual users (each will run ~1s hping bursts)
-  SPAWN_RATE: 500     # users/sec
-  RUN_TIME:   2m     # total duration
+concurrency:
+  group: bot-and-storm
+  cancel-in-progress: false
 
 jobs:
-  packet-storm:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  deploy-and-storm:
+    # run on your always-on self-hosted machine
+    runs-on: [ self-hosted, ubuntu, x64 ]
+
+    # only if we manually triggered or the previous run failed
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'failure')
+
+    timeout-minutes: 60
 
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v3
 
-      - name: 🔧 Install hping3 & Python
+      - name: ⚙️ Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y hping3 python3 python3-venv python3-pip
+          sudo apt-get install -y tcpkali iperf3 python3-venv
 
-      - name: 🐍 Setup virtualenv & deps
+      - name: 🔨 Setup Python venv & install deps
         run: |
-          python3 -m venv venv
-          . venv/bin/activate
+          python3 -m venv .venv
+          . .venv/bin/activate
           pip install --upgrade pip
-          pip install locust
+          pip install discord.py locust
 
-      - name: 🔥 Run master + 9 workers
+      - name: 🚀 Launch Discord Flooder Bot
         run: |
-          . venv/bin/activate
+          # kill old bot if running
+          pkill -f "python bot.py" || true
 
-          # 1) Master expecting 10 workers
-          locust -f locustfile_hping.py \
+          # start the bot in background
+          nohup bash -lc '
+            . .venv/bin/activate
+            export DISCORD_TOKEN="${{ secrets.DISCORD_TOKEN }}"
+            export FLOODER_ROLE_ID="${{ secrets.FLOODER_ROLE_ID }}"
+            python bot.py
+          ' > bot.log 2>&1 &
+
+      - name: ⏱️ Give bot a sec to connect
+        run: sleep 5
+
+      - name: 🔥 Run distributed Locust+C-Tools storm
+        run: |
+          . .venv/bin/activate
+
+          # 1) Start Locust master expecting 20 workers
+          locust -f locustfile_tools.py \
             --master \
-            --expect-workers 100 \
+            --expect-workers 20 \
             --headless \
-            --users "$USERS" \
-            --spawn-rate "$SPAWN_RATE" \
-            --run-time "$RUN_TIME" &
+            --users 200 \
+            --spawn-rate 20 \
+            --run-time 2m &
           MASTER_PID=$!
 
-          # 2) give master a moment
+          # 2) Give master time to bind
           sleep 5
 
-          # 3) Spawn 9 workers
-          for i in $(seq 1 100); do
-            locust -f locustfile_hping.py \
-              --worker --master-host=127.0.0.1 &
+          # 3) Start 19 workers on same host
+          for i in $(seq 1 20); do
+            locust -f locustfile_tools.py --worker --master-host=127.0.0.1 &
           done
 
-          # 4) wait for the test
+          # 4) Wait for the Locust swarm to finish
           wait $MASTER_PID
+
+      - name: ✅ Done
+        run: echo "Bot is running and Locust storm completed successfully."
