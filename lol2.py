@@ -4,9 +4,9 @@
 from gevent import monkey
 monkey.patch_all()
 
-import gc, uuid, random, requests
+import gc, uuid, random, time, requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from locust import HttpUser, TaskSet, task, events, constant
+from locust import HttpUser, TaskSet, events, constant
 
 # Disable Python GC to avoid pauses under heavy load
 gc.disable()
@@ -20,6 +20,8 @@ PROXY_SOURCE_URL = (
 MAX_PROXIES_TO_CHECK = 100
 # Timeout for validating each proxy
 VALIDATION_TIMEOUT = 5
+# Target URL for HEAD validation
+target_url = "https://restorecord-leak-search.vercel.app/"
 
 @events.test_start.add_listener
 def fetch_and_validate_proxies(environment, **kwargs):
@@ -34,19 +36,17 @@ def fetch_and_validate_proxies(environment, **kwargs):
         environment.proxies = []
         return
 
-    # Validate proxies concurrently
     valid = []
-    test_url = "https://restorecord-leak-search.vercel.app"  # fast endpoint
     def validate(proxy):
         proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
         try:
-            r = requests.head(test_url, proxies=proxies, timeout=VALIDATION_TIMEOUT)
+            r = requests.head(target_url, proxies=proxies, timeout=VALIDATION_TIMEOUT)
             if r.status_code < 400:
                 return proxy
         except:
             return None
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {executor.submit(validate, p): p for p in raw_proxies[:MAX_PROXIES_TO_CHECK]}
         for fut in as_completed(futures):
             result = fut.result()
@@ -59,53 +59,61 @@ def fetch_and_validate_proxies(environment, **kwargs):
 class UserBehavior(TaskSet):
     @task(7)
     def search(self):
-        # pick a random proxy if available
+        # pick a random validated proxy
         proxy = random.choice(self.environment.proxies) if self.environment.proxies else None
-        proxy_dict = {"http": f"http://{proxy}", "https": f"http://{proxy}"} if proxy else None
+        proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"} if proxy else None
 
+        # build request
         query = random.choice([
             "123456789012345678",
             "987654321098765432",
             "user_example",
             "ip:192.168.0.1",
         ])
-        headers = {
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "X-Debug-Nonce": uuid.uuid4().hex,
-            "X-Forwarded-For": proxy.split(":")[0] if proxy else None,
-        }
-        path = f"/?q={query}&nocache={uuid.uuid4().hex}"
-        self.client.get(
-            path,
-            name="GET /?q",
-            headers={k: v for k, v in headers.items() if v},
-            proxies=proxy_dict
-        )
+        path = f"https://restorecord-leak-search.vercel.app/?q={query}&nocache={uuid.uuid4().hex}"
+
+        start = time.time()
+        try:
+            r = requests.get(path, headers={"Cache-Control":"no-cache","Pragma":"no-cache"}, proxies=proxies, timeout=10)
+            elapsed = int((time.time() - start) * 1000)
+            if r.status_code < 400:
+                events.request.fire(request_type="GET", name="/search", response_time=elapsed, response_length=len(r.content))
+            else:
+                events.request.fire(request_type="GET", name="/search", response_time=elapsed, response_length=len(r.content), exception=Exception(f"{r.status_code}"))
+        except Exception as e:
+            elapsed = int((time.time() - start) * 1000)
+            events.request.fire(request_type="GET", name="/search", response_time=elapsed, response_length=0, exception=e)
 
     @task(3)
     def heavy_api(self):
         proxy = random.choice(self.environment.proxies) if self.environment.proxies else None
-        proxy_dict = {"http": f"http://{proxy}", "https": f"http://{proxy}"} if proxy else None
+        proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"} if proxy else None
         payload = {"data": "x" * random.randint(1000, 10000)}
-        headers = {"X-Debug-Nonce": uuid.uuid4().hex}
-        self.client.post(
-            "/api/process",
-            json=payload,
-            headers=headers,
-            proxies=proxy_dict,
-            name="POST /api/process"
-        )
+        url = "https://restorecord-leak-search.vercel.app/api/process"
+
+        start = time.time()
+        try:
+            r = requests.post(url, json=payload, proxies=proxies, timeout=10)
+            elapsed = int((time.time() - start) * 1000)
+            if r.status_code < 400:
+                events.request.fire(request_type="POST", name="/api/process", response_time=elapsed, response_length=len(r.content))
+            else:
+                events.request.fire(request_type="POST", name="/api/process", response_time=elapsed, response_length=len(r.content), exception=Exception(f"{r.status_code}"))
+        except Exception as e:
+            elapsed = int((time.time() - start) * 1000)
+            events.request.fire(request_type="POST", name="/api/process", response_time=elapsed, response_length=0, exception=e)
 
 class WebsiteUser(HttpUser):
-    host = "https://restorecord-leak-search.vercel.app"
-    tasks = [UserBehavior]
+    abstract = True
     wait_time = constant(0)
+
+class ProxyUser(WebsiteUser):
+    tasks = [UserBehavior]
 
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
-    print("[ChaosMonkey] MAX-POWER proxy stress test started...")
+    print("[ChaosMonkey] Proxy stress test started...")
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
-    print("[ChaosMonkey] MAX-POWER proxy stress test complete.")
+    print("[ChaosMonkey] Proxy stress test complete.")
