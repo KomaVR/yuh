@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       HOST:
-        description: 'Target URL to test'
+        description: 'Target base URL for Locust (e.g. https://example.com)'
         required: true
       USERS:
         description: 'Total virtual users'
@@ -16,15 +16,13 @@ on:
         description: 'Number of worker processes'
         required: true
       RUN_TIME:
-        description: 'How long to run (e.g. 5m, 1h)'
+        description: 'Duration (e.g. 5m, 1h)'
         required: true
 
 jobs:
   locust-swarm:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
     steps:
       - name: 📥 Checkout code
@@ -46,21 +44,27 @@ jobs:
           WORKERS: ${{ github.event.inputs.WORKERS }}
           RUN_TIME: ${{ github.event.inputs.RUN_TIME }}
         run: |
+          # total nodes = 1 master + WORKERS
           TOTAL=$((WORKERS + 1))
-          locust -f lol2.py \
+
+          # 1) Start master, expecting TOTAL participants
+          locust -f stress_test.py \
             --master \
             --expect-workers "${TOTAL}" \
             --headless \
-            --host="${HOST}" \
+            --host "${HOST}" \
             --users "${USERS}" \
             --spawn-rate "${SPAWN_RATE}" \
             --run-time "${RUN_TIME}" &
           MASTER_PID=$!
 
+          # 2) Give the master time to bind its socket
           sleep 10
 
+          # 3) Fire up each worker in the background
           for i in $(seq 1 "${WORKERS}"); do
-            locust -f lol2.py --worker --master-host=127.0.0.1 &
+            locust -f stress_test.py --worker --master-host 127.0.0.1 &
           done
 
+          # 4) Wait for the entire swarm to finish
           wait $MASTER_PID
