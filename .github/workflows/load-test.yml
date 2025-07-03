@@ -1,27 +1,20 @@
-name: 🚀 Deploy Bot & Run Locust+C-Tools (Self-Healing)
+name: 🚀 Deploy Bot & Run Locust+C-Tools (Scheduled)
 
-# 1) Kick off manually or on a prior failure
+# 1) Trigger every 5 minutes, or manually
 on:
+  schedule:
+    - cron:  '*/5 * * * *'
   workflow_dispatch:
-  workflow_run:
-    workflows: ["🚀 Deploy Bot & Run Locust+C-Tools (Self-Healing)"]
-    types: [completed]
 
+# 2) Guarantee only one run at a time (new schedules queue until previous finishes)
 concurrency:
   group: bot-and-storm
   cancel-in-progress: false
 
 jobs:
   deploy-and-storm:
-    # run on your always-on self-hosted machine
+    # must be your self-hosted runner so the bot can persist after the job
     runs-on: [ self-hosted, ubuntu, x64 ]
-
-    # only if we manually triggered or the previous run failed
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'failure')
-
     timeout-minutes: 60
 
     steps:
@@ -42,10 +35,7 @@ jobs:
 
       - name: 🚀 Launch Discord Flooder Bot
         run: |
-          # kill old bot if running
           pkill -f "python bot.py" || true
-
-          # start the bot in background
           nohup bash -lc '
             . .venv/bin/activate
             export DISCORD_TOKEN="${{ secrets.DISCORD_TOKEN }}"
@@ -67,13 +57,13 @@ jobs:
             --headless \
             --users 200 \
             --spawn-rate 20 \
-            --run-time 2m &
+            --run-time 60m &
           MASTER_PID=$!
 
           # 2) Give master time to bind
           sleep 5
 
-          # 3) Start 19 workers on same host
+          # 3) Launch 19 workers
           for i in $(seq 1 20); do
             locust -f locustfile_tools.py --worker --master-host=127.0.0.1 &
           done
@@ -82,4 +72,4 @@ jobs:
           wait $MASTER_PID
 
       - name: ✅ Done
-        run: echo "Bot is running and Locust storm completed successfully."
+        run: echo "Bot is running and Locust storm completed."
