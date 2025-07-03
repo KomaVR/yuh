@@ -5,9 +5,9 @@ import time
 import subprocess
 from locust import User, task, constant, events
 
-TARGET_IP   = "54.167.227.87"
-TCP_PORT    = 12345
-UDP_PORT    = 12345
+TARGET_IP   = "192.173.173.42"
+TCP_PORT    = 443
+UDP_PORT    = 80
 
 # common hping flags
 HpingBase = [
