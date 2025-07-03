@@ -45,7 +45,7 @@ jobs:
           RUN_TIME: ${{ github.event.inputs.RUN_TIME }}
         run: |
           # total nodes = 1 master + WORKERS
-          TOTAL=$((WORKERS + 1))
+          TOTAL=$((WORKERS))
 
           # 1) Start master, expecting TOTAL participants
           locust -f stress_test.py \
