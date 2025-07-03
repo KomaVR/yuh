@@ -1,17 +1,17 @@
-name: 🚀 Distributed Locust Load Test (20 nodes)
+name: 🚀 Distributed TCP Load Test (101 nodes)
 on:
   workflow_dispatch:
 
 env:
-  HOST: https://54.167.227.87
-  USERS: 50000
-  SPAWN_RATE: 5000
-  RUN_TIME: 5m
+  USERS:      50000    # total "users" (connections) across all nodes
+  SPAWN_RATE: 5000     # spawn rate (connections/sec)
+  RUN_TIME:   5m       # total run time
 
 jobs:
   locust-swarm:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v3
@@ -26,26 +26,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install locust
 
-      - name: 🔥 Launch master + 19 workers
+      - name: 🔥 Launch master + 100 workers
         run: |
-          # 1) Start master, expecting 20 total (1 master + 19 workers)
-          locust -f lol2.py \
+          # 1) Start master (no --host), expecting 100 workers
+          locust -f locustfile_tcp.py \
             --master \
             --expect-workers 100 \
             --headless \
-            --host="$HOST" \
             --users "$USERS" \
             --spawn-rate "$SPAWN_RATE" \
             --run-time "$RUN_TIME" &
           MASTER_PID=$!
 
-          # 2) Give it time to spin up its listener
-          sleep 10
+          # 2) Give the master time to bind
+          sleep 15
 
-          # 3) Now fire up 19 workers pointing at that master
+          # 3) Launch 100 workers against 127.0.0.1:5557
           for i in $(seq 1 100); do
-            locust -f lol2.py --worker --master-host=127.0.0.1 &
+            echo "[Swarm] Starting TCP worker #$i"
+            locust -f locustfile_tcp.py --worker --master-host=127.0.0.1 &
           done
 
-          # 4) Wait for the master (and the entire test) to finish
+          # 4) Wait for the test to finish
           wait $MASTER_PID
