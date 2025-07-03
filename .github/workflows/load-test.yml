@@ -2,35 +2,42 @@ name: 🚀 Deploy Bot & Run Locust+C-Tools (Scheduled)
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/5 * * * *'     # every 5 minutes
   workflow_dispatch:
 
 concurrency:
   group: bot-and-storm
-  cancel-in-progress: false
+  cancel-in-progress: false  # queue up if one is already running
 
 jobs:
   deploy-and-storm:
-    runs-on: ubuntu-latest
+    runs-on: [ self-hosted, ubuntu, x64 ]
     timeout-minutes: 60
 
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v3
 
-      - name: ⚙️ Install system deps & build tcpkali
+      - name: ⚙️ Install deps & build tcpkali
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake git libssl-dev libuv1-dev iperf3 python3-venv
-          
-          # compile tcpkali
-          git clone https://github.com/appneta/tcpkali.git /tmp/tcpkali
+          sudo apt-get install -y \
+            build-essential cmake libssl-dev libuv1-dev \
+            iperf3 python3-venv curl
+
+          # fetch akumuli/tcpkali master tarball
+          mkdir -p /tmp/tcpkali
+          curl -L \
+            https://github.com/akumuli/tcpkali/archive/refs/heads/master.tar.gz \
+            | tar -xzC /tmp/tcpkali --strip-components=1
+
+          # compile & install
           mkdir -p /tmp/tcpkali/build
           cd /tmp/tcpkali/build
-          cmake .. 
-          make -j "$(nproc)"
+          cmake ..
+          make -j"$(nproc)"
           sudo make install
-          
+
       - name: 🔨 Setup Python venv & install deps
         run: |
           python3 -m venv .venv
@@ -48,22 +55,31 @@ jobs:
             python bot.py
           ' > bot.log 2>&1 &
 
-      - name: ⏱️ Give bot a sec to connect
+      - name: ⏱️ Give bot a moment to connect
         run: sleep 5
 
       - name: 🔥 Run distributed Locust+C-Tools storm
         run: |
           . .venv/bin/activate
 
+          # start master (expects 20 workers)
           locust -f locustfile_tools.py \
-            --master --expect-workers 20 --headless \
-            --users 200 --spawn-rate 20 --run-time 2m &
+            --master \
+            --expect-workers 20 \
+            --headless \
+            --users 200 \
+            --spawn-rate 20 \
+            --run-time 2m &
           MASTER_PID=$!
+
           sleep 5
-          for i in $(seq 1 20); do
+
+          # spin up 19 workers
+          for i in $(seq 1 19); do
             locust -f locustfile_tools.py --worker --master-host=127.0.0.1 &
           done
+
           wait $MASTER_PID
 
-      - name: ✅ Done
-        run: echo "Bot is running and storm completed."
+      - name: ✅ All done
+        run: echo "Bot is live and storm completed."
