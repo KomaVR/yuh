@@ -1,5 +1,7 @@
+# locustfile_hping.py
 from gevent import monkey
-monkey.patch_all()
+# patch I/O but not threading
+monkey.patch_all(socket=True, dns=True, time=True, select=True, thread=False)
 
 import time
 import subprocess
