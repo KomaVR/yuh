@@ -4,7 +4,7 @@ on:
 
 env:
   # tweak these to taste
-  HOST: https://restorecord-leak-search.vercel.app
+  HOST: https://54.167.227.87
   USERS: 50000        # total users across all nodes
   SPAWN_RATE: 5000    # users/sec total
   RUN_TIME: 5m       # how long to hammer
