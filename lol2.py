@@ -54,7 +54,7 @@ def fetch_proxies(environment, **kwargs):
     print(f"[ProxySetup] {len(valid)} proxies are alive.")
 
 class ProxyUser(HttpUser):
-    host = "https://restorecord-leak-search.vercel.app"
+    host = "https://54.167.227.87"
     wait_time = between(0, 0)  # zero think time
 
     @task(7)
