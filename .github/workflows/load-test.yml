@@ -1,12 +1,11 @@
 name: 🚀 1 Gbps TCP/UDP Power Test (101 nodes)
-
 on:
   workflow_dispatch:
 
 env:
-  USERS: 150000    # total across swarm
-  SPAWN_RATE: 20000  # connections per second
-  RUN_TIME: 5m
+  USERS:      150000     # virtual users
+  SPAWN_RATE: 20000      # users spawned per second
+  RUN_TIME:   5m         # total duration
 
 jobs:
   tcp-gbps-swarm:
@@ -29,8 +28,8 @@ jobs:
 
       - name: 🔥 Launch master + 100 workers
         run: |
-          # 1) Start master, expecting 100 workers
-          locust -f locustfile_tcp_max_gbps.py \
+          # 1) Start master expecting 100 workers
+          locust -f locustfile_tcp_max_gbps_fixed.py \
             --master \
             --expect-workers 100 \
             --headless \
@@ -45,8 +44,8 @@ jobs:
           # 3) Spawn 100 workers
           for i in $(seq 1 100); do
             echo "[Swarm] Starting worker #$i"
-            locust -f locustfile_tcp_max_gbps.py --worker --master-host=127.0.0.1 &
+            locust -f locustfile_tcp_max_gbps_fixed.py --worker --master-host=127.0.0.1 &
           done
 
-          # 4) Wait for completion
+          # 4) Wait for the test to finish
           wait $MASTER_PID
