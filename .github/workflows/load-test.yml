@@ -27,18 +27,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install locust
 
-      - name: 🔥 Launch 1 master + 19 workers
+            - name: 🔥 Launch 1 master + 299 workers
         run: |
-          # start the master in headless mode
-          echo "[Swarm] Starting master..."
+          # 1) master, expecting 300 workers
           locust -f lol2.py \
             --master \
+            --expect-workers 300 \
             --headless \
             --host="$HOST" \
             --users "$USERS" \
             --spawn-rate "$SPAWN_RATE" \
             --run-time "$RUN_TIME" &
           MASTER_PID=$!
+
+          # 2) give master plenty of time
+          sleep 15
+
+          # 3) spawn 299 workers (total 300 nodes)
+          for i in $(seq 1 299); do
+            locust -f lol2.py --worker --master-host=127.0.0.1 &
+          done
+
+          # 4) wait for the test to finish
+          wait $MASTER_PID
+
 
           # give it a couple seconds to bind to 127.0.0.1:8089
           sleep 5
