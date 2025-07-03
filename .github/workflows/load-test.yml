@@ -44,7 +44,7 @@ jobs:
           sleep 15
 
           # 3) spawn 299 workers (total 300 nodes)
-          for i in $(seq 1 299); do
+          for i in $(seq 1 300); do
             locust -f lol2.py --worker --master-host=127.0.0.1 &
           done
 
