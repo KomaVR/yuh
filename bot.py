@@ -25,8 +25,10 @@ gh = Github(PAT_TOKEN)
 repo = gh.get_repo(f"{REPO_OWNER}/{REPO_NAME}")
 
 async def dispatch_locust_workflow(url: str, users: int, spawn_rate: int, workers: int, run_time: str):
-    repo.create_workflow_dispatch(
-        workflow_id=WORKFLOW_FILE,
+    # get the workflow object (filename must exactly match your workflow YAML)
+    workflow = repo.get_workflow(WORKFLOW_FILE)
+    # trigger it
+    workflow.create_dispatch(
         ref=REF,
         inputs={
             "HOST": url,
