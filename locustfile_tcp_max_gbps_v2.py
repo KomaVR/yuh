@@ -1,4 +1,4 @@
-# locustfile_tcp.py
+# locustfile_tcp_power.py
 from gevent import monkey
 monkey.patch_all()
 
