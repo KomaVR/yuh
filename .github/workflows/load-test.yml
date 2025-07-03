@@ -1,40 +1,53 @@
-# .github/workflows/load-test.yml
-name: 🚀 Distributed Locust Load Test
+name: 🚀 Distributed Locust Load Test (20 nodes)
 on:
   workflow_dispatch:
 
+env:
+  # tweak these to taste
+  HOST: https://restorecord-leak-search.vercel.app
+  USERS: 50000        # total users across all nodes
+  SPAWN_RATE: 5000    # users/sec total
+  RUN_TIME: 5m       # how long to hammer
+
 jobs:
-  load-test:
+  locust-swarm:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Install Locust
-      run: |
-        python -m pip install --upgrade pip
-        pip install locust
+      - name: 📦 Install Locust
+        run: |
+          python -m pip install --upgrade pip
+          pip install locust
 
-    - name: Run Locust master + workers
-      run: |
-        # start 4 local workers in background
-        for i in {1..4}; do
-          locust -f lol2.py --worker --master-host=127.0.0.1 &
-        done
-        sleep 5  # give workers time to connect
+      - name: 🔥 Launch 1 master + 19 workers
+        run: |
+          # start the master in headless mode
+          echo "[Swarm] Starting master..."
+          locust -f lol2.py \
+            --master \
+            --headless \
+            --host="$HOST" \
+            --users "$USERS" \
+            --spawn-rate "$SPAWN_RATE" \
+            --run-time "$RUN_TIME" &
+          MASTER_PID=$!
 
-        # now start master in headless mode
-        locust -f lol2.py \
-          --master \
-          --headless \
-          --host=https://restorecord-leak-search.vercel.app \
-          --users 2000 \
-          --spawn-rate 200 \
-          --run-time 5m
+          # give it a couple seconds to bind to 127.0.0.1:8089
+          sleep 5
+
+          # now spin up 19 workers that point at the local master
+          for i in $(seq 1 19); do
+            echo "[Swarm] Starting worker #$i"
+            locust -f lol2.py --worker --master-host=127.0.0.1 &
+          done
+
+          # wait for the master (and thus the whole stress test) to finish
+          wait $MASTER_PID
