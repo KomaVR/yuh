@@ -2,12 +2,12 @@ name: 🚀 Deploy Bot & Run Locust+C-Tools (Scheduled)
 
 on:
   schedule:
-    - cron: '*/5 * * * *'     # every 5 minutes
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 concurrency:
   group: bot-and-storm
-  cancel-in-progress: false  # queue up if one is already running
+  cancel-in-progress: false
 
 jobs:
   deploy-and-storm:
@@ -18,25 +18,10 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v3
 
-      - name: ⚙️ Install deps & build tcpkali
+      - name: ⚙️ Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake libssl-dev libuv1-dev \
-            iperf3 python3-venv curl
-
-          # fetch akumuli/tcpkali master tarball
-          mkdir -p /tmp/tcpkali
-          curl -L \
-            https://github.com/akumuli/tcpkali/archive/refs/heads/master.tar.gz \
-            | tar -xzC /tmp/tcpkali --strip-components=1
-
-          # compile & install
-          mkdir -p /tmp/tcpkali/build
-          cd /tmp/tcpkali/build
-          cmake ..
-          make -j"$(nproc)"
-          sudo make install
+          sudo apt-get install -y hping3 iperf3 python3-venv
 
       - name: 🔨 Setup Python venv & install deps
         run: |
@@ -61,24 +46,14 @@ jobs:
       - name: 🔥 Run distributed Locust+C-Tools storm
         run: |
           . .venv/bin/activate
-
-          # start master (expects 20 workers)
           locust -f locustfile_tools.py \
-            --master \
-            --expect-workers 20 \
-            --headless \
-            --users 200 \
-            --spawn-rate 20 \
-            --run-time 2m &
+            --master --expect-workers 20 --headless \
+            --users 200 --spawn-rate 20 --run-time 2m &
           MASTER_PID=$!
-
           sleep 5
-
-          # spin up 19 workers
-          for i in $(seq 1 19); do
+          for i in $(seq 1 20); do
             locust -f locustfile_tools.py --worker --master-host=127.0.0.1 &
           done
-
           wait $MASTER_PID
 
       - name: ✅ All done
