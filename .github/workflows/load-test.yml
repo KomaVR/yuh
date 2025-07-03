@@ -1,25 +1,21 @@
-name: 🚀 Distributed TCP Load Test (101 nodes)
-on:
-  workflow_dispatch:
+name: 🚀 1 Gbps TCP/UDP Power Test (101 nodes)
+on: workflow_dispatch
 
 env:
-  USERS:      50000    # total "users" (connections) across all nodes
-  SPAWN_RATE: 5000     # spawn rate (connections/sec)
-  RUN_TIME:   5m       # total run time
+  USERS:      150000    # total across swarm
+  SPAWN_RATE: 20000     # connections per second
+  RUN_TIME:   5m
 
 jobs:
-  locust-swarm:
+  tcp-gbps-swarm:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 30
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: 🐍 Setup Python
         uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+        with: python-version: '3.11'
 
       - name: 📦 Install Locust
         run: |
@@ -28,8 +24,8 @@ jobs:
 
       - name: 🔥 Launch master + 100 workers
         run: |
-          # 1) Start master (no --host), expecting 100 workers
-          locust -f locustfile_tcp.py \
+          # 1) Start master, expecting 100 workers
+          locust -f locustfile_tcp_max_gbps.py \
             --master \
             --expect-workers 100 \
             --headless \
@@ -38,14 +34,14 @@ jobs:
             --run-time "$RUN_TIME" &
           MASTER_PID=$!
 
-          # 2) Give the master time to bind
-          sleep 15
+          # 2) Give master time to bind
+          sleep 20
 
-          # 3) Launch 100 workers against 127.0.0.1:5557
+          # 3) Spawn 100 workers
           for i in $(seq 1 100); do
-            echo "[Swarm] Starting TCP worker #$i"
-            locust -f locustfile_tcp.py --worker --master-host=127.0.0.1 &
+            echo "[Swarm] Starting worker #$i"
+            locust -f locustfile_tcp_max_gbps.py --worker --master-host=127.0.0.1 &
           done
 
-          # 4) Wait for the test to finish
+          # 4) Wait for completion
           wait $MASTER_PID
