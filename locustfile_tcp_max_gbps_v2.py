@@ -5,8 +5,8 @@ monkey.patch_all()
 import socket, time
 from locust import User, task, constant, events
 
-TARGET_IP   = "54.167.227.87"
-TARGET_PORT = 12345
+TARGET_IP   = "192.173.173.42"
+TARGET_PORT = 80
 
 # 64 KB chunk
 CHUNK_SIZE  = 64 * 1024
