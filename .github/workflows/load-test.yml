@@ -1,21 +1,26 @@
 name: 🚀 1 Gbps TCP/UDP Power Test (101 nodes)
-on: workflow_dispatch
+
+on:
+  workflow_dispatch:
 
 env:
-  USERS:      150000    # total across swarm
-  SPAWN_RATE: 20000     # connections per second
-  RUN_TIME:   5m
+  USERS: 150000    # total across swarm
+  SPAWN_RATE: 20000  # connections per second
+  RUN_TIME: 5m
 
 jobs:
   tcp-gbps-swarm:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v3
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
 
       - name: 🐍 Setup Python
         uses: actions/setup-python@v4
-        with: python-version: '3.11'
+        with:
+          python-version: '3.11'
 
       - name: 📦 Install Locust
         run: |
