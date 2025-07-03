@@ -1,19 +1,16 @@
 name: 🚀 Deploy Bot & Run Locust+C-Tools (Scheduled)
 
-# 1) Trigger every 5 minutes, or manually
 on:
   schedule:
-    - cron:  '*/5 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
-# 2) Guarantee only one run at a time (new schedules queue until previous finishes)
 concurrency:
   group: bot-and-storm
   cancel-in-progress: false
 
 jobs:
   deploy-and-storm:
-    # must be your self-hosted runner so the bot can persist after the job
     runs-on: [ self-hosted, ubuntu, x64 ]
     timeout-minutes: 60
 
@@ -50,26 +47,15 @@ jobs:
         run: |
           . .venv/bin/activate
 
-          # 1) Start Locust master expecting 20 workers
           locust -f locustfile_tools.py \
-            --master \
-            --expect-workers 20 \
-            --headless \
-            --users 200 \
-            --spawn-rate 20 \
-            --run-time 60m &
+            --master --expect-workers 20 --headless \
+            --users 200 --spawn-rate 20 --run-time 2m &
           MASTER_PID=$!
-
-          # 2) Give master time to bind
           sleep 5
-
-          # 3) Launch 19 workers
           for i in $(seq 1 20); do
             locust -f locustfile_tools.py --worker --master-host=127.0.0.1 &
           done
-
-          # 4) Wait for the Locust swarm to finish
           wait $MASTER_PID
 
       - name: ✅ Done
-        run: echo "Bot is running and Locust storm completed."
+        run: echo "Bot is running and storm completed."
