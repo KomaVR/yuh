@@ -1,9 +1,10 @@
+# locustfile_tools.py
 import os
 import time
 import subprocess
 from locust import User, task, constant, events
 
-# pulled from env by /storm
+# The workflow’s run_storm job will export these
 TARGET_IP     = os.getenv("LOCUST_TARGET_IP", "127.0.0.1")
 TCP_PORT      = int(os.getenv("LOCUST_TCP_PORT", "12345"))
 UDP_PORT      = int(os.getenv("LOCUST_UDP_PORT", "12345"))
@@ -15,13 +16,13 @@ class HpingUser(User):
     @task(1)
     def syn_flood(self):
         """
-        1s TCP SYN flood using hping3 --flood --rand-source
+        1s TCP SYN flood using hping3 --flood --rand-source.
         """
         cmd = [
             "hping3",
-            "--flood",          # send as fast as possible
-            "--rand-source",    # randomize src IP
-            "-S",               # SYN flag
+            "--flood",
+            "--rand-source",
+            "-S",
             "-p", str(TCP_PORT),
             TARGET_IP,
         ]
@@ -51,7 +52,7 @@ class IperfUser(User):
     @task(1)
     def udp_flood(self):
         """
-        1s UDP flood at configured bandwidth via iperf3
+        1s UDP flood at configured bandwidth via iperf3.
         """
         cmd = [
             "iperf3",
