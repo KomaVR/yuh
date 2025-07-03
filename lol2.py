@@ -6,7 +6,7 @@ monkey.patch_all()
 
 import gc, uuid, random, time, requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from locust import HttpUser, TaskSet, events, constant
+from locust import HttpUser, TaskSet, task, events, constant
 
 # Disable Python GC to avoid pauses under heavy load
 gc.disable()
@@ -59,11 +59,9 @@ def fetch_and_validate_proxies(environment, **kwargs):
 class UserBehavior(TaskSet):
     @task(7)
     def search(self):
-        # pick a random validated proxy
         proxy = random.choice(self.environment.proxies) if self.environment.proxies else None
         proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"} if proxy else None
 
-        # build request
         query = random.choice([
             "123456789012345678",
             "987654321098765432",
@@ -117,3 +115,4 @@ def on_test_start(environment, **kwargs):
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
     print("[ChaosMonkey] Proxy stress test complete.")
+    
