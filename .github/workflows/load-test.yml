@@ -31,7 +31,7 @@ jobs:
           # 1) Start master, expecting 20 total (1 master + 19 workers)
           locust -f lol2.py \
             --master \
-            --expect-workers 20 \
+            --expect-workers 19 \
             --headless \
             --host="$HOST" \
             --users "$USERS" \
