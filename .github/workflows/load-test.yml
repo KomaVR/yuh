@@ -18,11 +18,19 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v3
 
-      - name: ⚙️ Install system deps
+      - name: ⚙️ Install system deps & build tcpkali
         run: |
           sudo apt-get update
-          sudo apt-get install -y tcpkali iperf3 python3-venv
-
+          sudo apt-get install -y build-essential cmake git libssl-dev libuv1-dev iperf3 python3-venv
+          
+          # compile tcpkali
+          git clone https://github.com/appneta/tcpkali.git /tmp/tcpkali
+          mkdir -p /tmp/tcpkali/build
+          cd /tmp/tcpkali/build
+          cmake .. 
+          make -j "$(nproc)"
+          sudo make install
+          
       - name: 🔨 Setup Python venv & install deps
         run: |
           python3 -m venv .venv
